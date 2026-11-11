@@ -17,6 +17,9 @@ install:
       from: "SaltySD/"
       to: "Sources/NXVenom/SaltySD/"
       mode: "delete-before-copy"
+      # plugins/ is owned by the fpslocker-patches component
+      preserve:
+        - "plugins"
     - asset: "SaltyNX.zip"
       from: "atmosphere/contents/0000000000534C56/"
       to: "Sources/NXVenom/atmosphere/contents/0000000000534C56/"

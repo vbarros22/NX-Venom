@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import urllib.request
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -127,12 +128,14 @@ class SandboxTestCase(unittest.TestCase):
       "CACHE_DIR": build / "cache",
       "WORK_DIR": build / "work",
       "API_CACHE_DIR": build / "cache" / "github-api",
+      "REQUIRED_PATHS": [],
     }
     for name, value in patches.items():
       patcher = mock.patch.object(vu, name, value)
       patcher.start()
       self.addCleanup(patcher.stop)
     self.failing = set()
+    self.versions = {}
     for name, fake in (("resolve_component", self.fake_resolve), ("download_asset", self.fake_download)):
       patcher = mock.patch.object(vu, name, side_effect=fake)
       patcher.start()
@@ -142,7 +145,7 @@ class SandboxTestCase(unittest.TestCase):
     import shutil
     shutil.rmtree(self.tmp, ignore_errors=True)
 
-  def add_component(self, name, destination, content="new"):
+  def add_component(self, name, destination, content="new", extra=""):
     (self.assets / f"{name}.bin").write_text(content)
     (self.root / "Build" / "components" / f"{name}.yaml").write_text(
       f'name: "{name}"\n'
@@ -158,6 +161,7 @@ class SandboxTestCase(unittest.TestCase):
       f'    - asset: "{name}.bin"\n'
       f'      from: "{name}.bin"\n'
       f'      to: "{destination}"\n'
+      + extra
     )
 
   def fake_resolve(self, component):
@@ -166,7 +170,7 @@ class SandboxTestCase(unittest.TestCase):
       vu.fail(f"simulated network failure for {name}")
     return {
       "component": component, "name": name, "repo": f"test/{name}",
-      "source_type": "github-release", "version": "v2", "revision": "r2",
+      "source_type": "github-release", "version": self.versions.get(name, "v2"), "revision": "r2",
       "html_url": None,
       "assets": [{"name": f"{name}.bin", "pattern": f"{name}.bin", "url": "", "size": None, "type": "file"}],
     }
@@ -233,6 +237,141 @@ class CheckIsolationTests(SandboxTestCase):
     self.assertIn("simulated network failure for alpha", out)
     zeta_row = next(line for line in out.splitlines() if line.strip().startswith("zeta"))
     self.assertIn("UPDATE", zeta_row)
+
+
+class IntegrityTests(unittest.TestCase):
+  def setUp(self):
+    self.tmp = Path(tempfile.mkdtemp())
+    self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+    self.file = self.tmp / "asset.bin"
+    self.file.write_bytes(b"payload")
+    self.sha = vu.file_hash(self.file)
+
+  def test_matching_digest_passes(self):
+    asset = {"type": "file", "size": 7, "digest": f"sha256:{self.sha}"}
+    self.assertIsNone(vu.download_validation_error(self.file, asset))
+
+  def test_digest_mismatch_is_rejected(self):
+    asset = {"type": "file", "size": 7, "digest": "sha256:" + "0" * 64}
+    self.assertIn("sha256 mismatch", str(vu.download_validation_error(self.file, asset)))
+
+  def test_size_mismatch_rejected_even_for_valid_zip(self):
+    archive = self.tmp / "a.zip"
+    with zipfile.ZipFile(archive, "w") as zip_file:
+      zip_file.writestr("x.txt", "x")
+    asset = {"type": "zip", "size": archive.stat().st_size + 1}
+    self.assertIn("size mismatch", str(vu.download_validation_error(archive, asset)))
+
+  def release_target(self, digest):
+    return {"source_type": "github-release", "version": "1.0", "revision": "edited-later",
+            "assets": [{"name": "a.zip", "digest": f"sha256:{digest}"}]}
+
+  def test_edited_release_notes_are_not_an_update(self):
+    state = {"version": "1.0", "revision": "original", "assets": [{"name": "a.zip", "sha256": "ab" * 32}]}
+    self.assertFalse(vu.is_outdated(state, self.release_target("ab" * 32)))
+
+  def test_reuploaded_asset_under_same_tag_is_an_update(self):
+    state = {"version": "1.0", "revision": "original", "assets": [{"name": "a.zip", "sha256": "ab" * 32}]}
+    self.assertTrue(vu.is_outdated(state, self.release_target("cd" * 32)))
+
+  def test_legacy_state_without_hashes_compares_names(self):
+    state = {"version": "1.0", "revision": "original", "assets": [{"name": "a.zip", "size": 1}]}
+    self.assertFalse(vu.is_outdated(state, self.release_target("cd" * 32)))
+
+  def test_state_record_keeps_sha256(self):
+    record = vu.state_record({"repo": "r", "source_type": "github-release", "version": "1", "revision": "x",
+                              "assets": [{"name": "a.zip", "size": 3, "type": "zip", "digest": "sha256:" + "EF" * 32}]})
+    self.assertEqual(record["assets"][0]["sha256"], "ef" * 32)
+
+
+class RequirementTests(unittest.TestCase):
+  manifests = [
+    {"name": "atmosphere", "display_name": "Atmosphere"},
+    {"name": "horizon-oc", "display_name": "Horizon OC", "_path": Path("horizon-oc.yaml"),
+     "requires": [{"component": "atmosphere", "versions": {"2.6.0-rel": "1.12.1"}}]},
+  ]
+
+  def test_compatible_pair(self):
+    self.assertEqual(vu.requirement_errors(self.manifests, {"atmosphere": "1.12.1", "horizon-oc": "2.6.0-rel"}), [])
+
+  def test_atmosphere_ahead_of_hoc_is_refused(self):
+    errors = vu.requirement_errors(self.manifests, {"atmosphere": "1.12.2", "horizon-oc": "2.6.0-rel"})
+    self.assertIn("needs Atmosphere 1.12.1", errors[0])
+
+  def test_untested_hoc_release_is_refused(self):
+    errors = vu.requirement_errors(self.manifests, {"atmosphere": "1.12.1", "horizon-oc": "2.7.0"})
+    self.assertIn("no tested Atmosphere version", errors[0])
+
+  def test_repository_manifests_declare_the_pair(self):
+    hoc = next(m for m in vu.load_manifests() if m["name"] == "horizon-oc")
+    self.assertEqual(hoc["requires"][0]["component"], "atmosphere")
+
+
+class PreserveTests(unittest.TestCase):
+  def test_delete_before_copy_keeps_preserved_entries(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root = Path(tmp)
+      with mock.patch.object(vu, "ROOT_DIR", root):
+        source = root / "src"
+        (source).mkdir()
+        (source / "core.elf").write_text("new")
+        destination = root / "Sources" / "SaltySD"
+        (destination / "plugins" / "FPSLocker").mkdir(parents=True)
+        (destination / "plugins" / "FPSLocker" / "p.yaml").write_text("keep")
+        (destination / "stale.elf").write_text("old")
+        actions = []
+        vu.copy_directory(source, destination, "delete-before-copy", [], False, actions, preserve=["plugins"])
+        self.assertTrue((destination / "plugins" / "FPSLocker" / "p.yaml").exists())
+        self.assertFalse((destination / "stale.elf").exists())
+        self.assertEqual((destination / "core.elf").read_text(), "new")
+
+
+class Phase2SandboxTests(SandboxTestCase):
+  REQUIRES = ('requires:\n'
+              '  - component: "core"\n'
+              '    versions:\n'
+              '      "2.0": "1.0"\n')
+
+  def test_update_records_sha256_in_state(self):
+    self.add_component("alpha", "Sources/NXVenom/alpha.bin")
+    code, _, err = self.run_cli("update")
+    self.assertEqual(code, 0, err)
+    recorded = self.state()["components"]["alpha"]["assets"][0]["sha256"]
+    self.assertEqual(recorded, vu.file_hash(self.assets / "alpha.bin"))
+
+  def test_update_refuses_incompatible_versions_before_writing(self):
+    self.add_component("core", "Sources/NXVenom/core.bin")
+    self.add_component("oc", "Sources/NXVenom/oc.bin", extra=self.REQUIRES)
+    self.versions = {"core": "1.1", "oc": "2.0"}
+    code, _, err = self.run_cli("update")
+    self.assertEqual(code, 1)
+    self.assertIn("needs core 1.0", err)
+    self.assertFalse((self.root / "Sources/NXVenom/core.bin").exists())
+
+  def test_update_accepts_compatible_versions(self):
+    self.add_component("core", "Sources/NXVenom/core.bin")
+    self.add_component("oc", "Sources/NXVenom/oc.bin", extra=self.REQUIRES)
+    self.versions = {"core": "1.0", "oc": "2.0"}
+    code, _, err = self.run_cli("update")
+    self.assertEqual(code, 0, err)
+
+  def test_validate_reports_problems(self):
+    self.add_component("alpha", "Sources/NXVenom/alpha.bin")
+    bootloader = self.root / "Sources/NXVenom/bootloader"
+    bootloader.mkdir(parents=True)
+    (bootloader / "hekate_ipl.ini").write_text("[CFW]\nsecmon=atmosphere/exosphere.bin\n")
+    (self.root / "Sources/NXVenom/broken.json").write_text('{"a": 1,}')
+    code, out, _ = self.run_cli("validate")
+    self.assertEqual(code, 1)
+    self.assertIn("Sources/NXVenom/alpha.bin (alpha)", out)
+    self.assertIn("Sources/NXVenom/atmosphere/exosphere.bin (hekate_ipl.ini)", out)
+    self.assertIn("invalid JSON", out)
+
+  def test_validate_ok_when_everything_is_present(self):
+    self.add_component("alpha", "Sources/NXVenom/alpha.bin")
+    (self.root / "Sources/NXVenom/alpha.bin").write_text("x")
+    code, out, _ = self.run_cli("validate")
+    self.assertEqual(code, 0, out)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,18 @@
+name: "fpslocker-patches"
+display_name: "FPSLocker Patches"
+aliases:
+  - "fpslocker-warehouse"
+enabled: true
+category: "Overlays"
+# Per-game FPSLocker patches. Previously downloaded at build time from the
+# moving v4 branch (unpinned, untracked); now versioned like any component.
+source:
+  type: "github-branch-archive"
+  repo: "masagrator/FPSLocker-Warehouse"
+  branch: "v4"
+install:
+  mappings:
+    - asset: "FPSLocker-Warehouse-v4-*.zip"
+      from: "SaltySD/plugins/"
+      to: "Sources/NXVenom/SaltySD/plugins/"
+      mode: "delete-before-copy"
