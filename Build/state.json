@@ -54,21 +54,23 @@
       "assets": [
         {
           "name": "DBI.nro",
-          "size": 16657965,
+          "sha256": "816db30d9ccc88e3a1cdc6e294ae71ba92b101628437ecddc94d9168fb1aa319",
+          "size": 16637485,
           "type": "file"
         },
         {
-          "name": "dbi.config",
-          "size": 7705,
+          "name": "translation_en.bin",
+          "sha256": "fc449d83a027a9b496320d5420c8b459daa4f47508412256c0df9a90047adb93",
+          "size": 811612,
           "type": "file"
         }
       ],
-      "html_url": "https://github.com/rashevskyv/dbi/releases/tag/912ru",
-      "repo": "rashevskyv/dbi",
-      "revision": "2026-09-18T07:14:24Z",
+      "html_url": "https://github.com/rashevskyv/DBIPatcher/releases/tag/921",
+      "repo": "rashevskyv/DBIPatcher",
+      "revision": "2026-11-05T09:40:28Z",
       "source_type": "github-release",
-      "updated_at": "2026-11-11T17:53:16+00:00",
-      "version": "912ru"
+      "updated_at": "2026-11-11T18:42:35+00:00",
+      "version": "921"
     },
     "easy-setup": {
       "assets": [
@@ -99,6 +101,22 @@
       "source_type": "github-release",
       "updated_at": "2026-11-11T17:53:13+00:00",
       "version": "3.5.1"
+    },
+    "fpslocker-patches": {
+      "assets": [
+        {
+          "name": "FPSLocker-Warehouse-v4-29840cd5ce36.zip",
+          "sha256": "d426ca6184d523eabd6914bac8b369ea9a53bd9499fe607c99a369e9b020fa39",
+          "size": null,
+          "type": "zip"
+        }
+      ],
+      "html_url": "https://github.com/masagrator/FPSLocker-Warehouse/tree/v4",
+      "repo": "masagrator/FPSLocker-Warehouse",
+      "revision": "29840cd5ce36d330a227021b6a5b16af1407cdca",
+      "source_type": "github-branch-archive",
+      "updated_at": "2026-11-11T18:42:34+00:00",
+      "version": "v4"
     },
     "hekate": {
       "assets": [
