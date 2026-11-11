@@ -63,6 +63,52 @@ class TokenScopeTests(unittest.TestCase):
     self.assertTrue(new_request.has_header("Authorization"))
 
 
+EASY_SETUP_MISC = Path(__file__).resolve().parents[2] / "Sources/NXVenom/switch/.packages/Easy Setup/data/miscellaneous.ini"
+TESTING_SECTION = (
+  "\n[Testing builds(don't touch unless advised)]\n"
+  "download https://github.com/Atmosphere-NX/Atmosphere/releases/download/1.12.1/"
+  "atmosphere-1.12.1-master-6b0c077b4+hbl-2.4.5+hbmenu-3.6.1.zip /config/ultrahand/downloads/dist.zip\n"
+  "unzip /config/ultrahand/downloads/dist.zip /config/ultrahand/downloads/app/\n"
+  "move /config/ultrahand/downloads/app/ /\n"
+  "delete /config/ultrahand/downloads/dist.zip\n"
+  "reboot\n"
+  "\n"
+)
+
+
+class RemoveIniSectionTests(unittest.TestCase):
+  def run_transform(self, text, section="Testing builds*", newline="\n"):
+    with tempfile.TemporaryDirectory() as tmp:
+      path = Path(tmp) / "data" / "miscellaneous.ini"
+      path.parent.mkdir()
+      path.write_bytes(text.replace("\n", newline).encode("utf-8"))
+      roots = [{"asset": {"name": "Easy-setup-main-abc.zip"}, "root": Path(tmp)}]
+      transform = {"asset": "Easy-setup-main-*.zip", "path": "data/miscellaneous.ini", "section": section, "final_newline": True}
+      err = io.StringIO()
+      with contextlib.redirect_stderr(err):
+        vu.apply_remove_ini_section_transform(transform, roots)
+      return path.read_bytes().decode("utf-8"), err.getvalue()
+
+  def test_current_upstream_layout_matches_committed_file(self):
+    committed = EASY_SETUP_MISC.read_text(encoding="utf-8")
+    result, _ = self.run_transform(committed + TESTING_SECTION)
+    self.assertEqual(result, committed)
+
+  def test_section_in_the_middle_keeps_following_sections(self):
+    text = "[A]\na=1\n\n[Testing builds(x)]\ndownload x\n\n[B]\nb=2\n"
+    result, _ = self.run_transform(text)
+    self.assertEqual(result, "[A]\na=1\n\n[B]\nb=2\n")
+
+  def test_crlf_files_keep_crlf(self):
+    result, _ = self.run_transform("[A]\na=1\n[Testing builds]\nx\n", newline="\r\n")
+    self.assertEqual(result, "[A]\r\na=1\r\n")
+
+  def test_missing_section_warns_and_leaves_file_alone(self):
+    result, err = self.run_transform("[A]\na=1\n")
+    self.assertEqual(result, "[A]\na=1\n")
+    self.assertIn("not found", err)
+
+
 class SandboxTestCase(unittest.TestCase):
   """Points the updater at a throwaway repository root with fake components."""
 

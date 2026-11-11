@@ -835,6 +835,56 @@ def apply_patch_byte_copy_transform(transform, roots) -> None:
   destination.write_bytes(data)
 
 
+def ini_section_name(line: str):
+  stripped = line.strip()
+  if stripped.startswith("[") and stripped.endswith("]"):
+    return stripped[1:-1]
+  return None
+
+
+def remove_ini_sections(text: str, pattern: str):
+  """Remove every `[section]` whose name matches the glob `pattern`, from its
+  header up to the next header or end of file. Returns (text, removed)."""
+  output = []
+  removed = 0
+  skipping = False
+  for line in text.splitlines(keepends=True):
+    name = ini_section_name(line)
+    if name is not None:
+      skipping = fnmatch.fnmatchcase(name, pattern)
+      if skipping:
+        removed += 1
+    if not skipping:
+      output.append(line)
+  return "".join(output), removed
+
+
+def apply_remove_ini_section_transform(transform, roots) -> None:
+  pattern = transform.get("section")
+  if not isinstance(pattern, str) or not pattern:
+    fail("remove-ini-section transform requires a section name or glob")
+  candidates = transform_candidates(transform, roots)
+  if not candidates:
+    fail(f"Transform source not found: {transform.get('path')}")
+  for path in candidates:
+    if not path.is_file():
+      fail(f"remove-ini-section transform source is not a file: {path}")
+    if root_for_source(path, roots) is None:
+      fail(f"Transform source escapes asset root: {path}")
+    with path.open("r", encoding="utf-8", newline="") as input_file:
+      text = input_file.read()
+    text, removed = remove_ini_sections(text, pattern)
+    if not removed:
+      # The goal (section absent) is already met; keep going but make it
+      # visible so the manifest can be cleaned up.
+      print(f"warning: section [{pattern}] not found in {path.name}; nothing to remove", file=sys.stderr)
+      continue
+    if transform.get("final_newline") is True:
+      text = text.rstrip("\r\n") + ("\r\n" if "\r\n" in text else "\n")
+    with path.open("w", encoding="utf-8", newline="") as output_file:
+      output_file.write(text)
+
+
 def apply_install_transforms(component, roots) -> None:
   install = component.get("install") or {}
   for transform in install.get("transforms") or []:
@@ -843,6 +893,8 @@ def apply_install_transforms(component, roots) -> None:
       apply_replace_text_transform(transform, roots)
     elif transform_type == "patch-byte-copy":
       apply_patch_byte_copy_transform(transform, roots)
+    elif transform_type == "remove-ini-section":
+      apply_remove_ini_section_transform(transform, roots)
     else:
       fail(f"Unsupported install transform: {transform_type}")
 
