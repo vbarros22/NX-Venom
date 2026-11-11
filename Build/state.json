@@ -33,22 +33,22 @@
     "atmosphere": {
       "assets": [
         {
-          "name": "atmosphere-1.12.2-master-4e3f37038+hbl-2.4.5+hbmenu-3.6.1.zip",
-          "size": 4772937,
+          "name": "atmosphere-1.12.1-master-6b0c077b4+hbl-2.4.5+hbmenu-3.6.1.zip",
+          "size": 4772493,
           "type": "zip"
         },
         {
           "name": "fusee.bin",
-          "size": 112160,
+          "size": 112064,
           "type": "file"
         }
       ],
-      "html_url": "https://github.com/Atmosphere-NX/Atmosphere/releases/tag/1.12.2",
+      "html_url": "https://github.com/Atmosphere-NX/Atmosphere/releases/tag/1.12.1",
       "repo": "Atmosphere-NX/Atmosphere",
-      "revision": "2026-11-11T00:09:15Z",
+      "revision": "2026-10-16T00:05:51Z",
       "source_type": "github-release",
-      "updated_at": "2026-11-11T17:53:12+00:00",
-      "version": "1.12.2"
+      "updated_at": "2026-11-11T18:14:35+00:00",
+      "version": "1.12.1"
     },
     "dbi": {
       "assets": [
