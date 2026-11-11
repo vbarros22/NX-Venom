@@ -1,37 +1,70 @@
 name: build
+
+# Run from the Actions tab: "build" -> "Run workflow".
+# Updates the components (optional), validates, builds both zips, commits the
+# result to the branch and opens a draft release with generated notes.
 on:
-  # push:
-  #   branches: ["main"]
   workflow_dispatch:
+    inputs:
+      update:
+        description: "Update all components before building"
+        type: boolean
+        default: true
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      # Give the default GITHUB_TOKEN write permission to commit and push the changed files back to the repository.
+      # Commit the updated sources/zips and create the draft release.
       contents: write
+    env:
+      # Higher GitHub API rate limit for the component checks.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
-          fetch-depth: 0 # It's needed for git-restore-mtime
-      - name: Reset directories timestamp # Workaround for https://github.com/MestreLion/git-tools/issues/47
-        run: find . -mindepth 1 -type d -not -iwholename '*.git*' -exec touch -t 197001010000 {} \;
-      - name: Restore files timestamp
-        uses: chetan/git-restore-mtime-action@v2 # Restore files original modification time to have deterministic zip bundles
-      # - name: Setup upterm session
-      #   uses: lhotari/action-upterm@v1
-      - name: "Install FPSLocker patches"
-        run: make install-fpslocker-patches
-      - name: "Compile NXVenom"
-        run: make build-nxvenom
-      - name: "Compile AIO"
-        run: make build-aio
-      - uses: stefanzweifel/git-auto-commit-action@v5
+          python-version: "3.12"
+
+      - name: Test updater
+        run: make test
+
+      - name: Update components
+        if: ${{ inputs.update }}
+        run: make update-all
+
+      - name: Build NXVenom.zip and AIO.zip
+        # `make build` validates first. Zips are deterministic: the Makefile
+        # pins every file timestamp, so no mtime restoring is needed.
+        run: make build
+
+      - name: Release notes
+        id: notes
+        run: |
+          python3 Build/venom_update.py release-notes --from "${{ github.sha }}" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+          echo "tag=build-$(date -u +%Y%m%d)-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit updated bundle
+        id: commit
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Build: Compile Bundle"
-          file_pattern: "AIO.zip NXVenom.zip"
-      - name: Release
+          commit_message: "Build: update components and compile bundle"
+          file_pattern: "Sources Build/state.json AIO.zip NXVenom.zip"
+
+      - name: Draft release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          generate_release_notes: false
-          files: NXVenom.zip
+          tag_name: ${{ steps.notes.outputs.tag }}
+          target_commitish: ${{ steps.commit.outputs.commit_hash || github.sha }}
+          name: NX Venom ${{ steps.notes.outputs.tag }}
+          body_path: ${{ runner.temp }}/notes.md
+          files: |
+            NXVenom.zip
+            AIO.zip
