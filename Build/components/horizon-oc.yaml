@@ -8,6 +8,14 @@ source:
   type: "github-release"
   repo: "Horizon-OC/Horizon-OC"
   release: "latest"
+# hekate boots CFW with secmon=atmosphere/exosphere.bin, and that exosphere
+# comes from this package. Each HOC release is built against one Atmosphere
+# version: list it here after testing the pair on a console. Updates and
+# `make validate` refuse any other combination (mismatch = black screen).
+requires:
+  - component: "atmosphere"
+    versions:
+      "2.6.0-rel": "1.12.1"
 assets:
   - pattern: "dist_ext.zip"
     type: "zip"

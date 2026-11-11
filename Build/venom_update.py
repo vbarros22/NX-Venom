@@ -45,7 +45,6 @@ PROTECTED_PATTERNS = [
   "Sources/NXVenom/atmosphere/config_templates/**",
   "Sources/NXVenom/atmosphere/hosts/**",
   "Sources/NXVenom/atmosphere/kips/**",
-  "Sources/NXVenom/config/sys-clk/config.ini",
   "Sources/NXVenom/config/ultrahand/config.ini",
   "Sources/NXVenom/config/ultrahand/fuse.ini",
   "Sources/NXVenom/config/ultrahand/overlays.ini",
@@ -171,6 +170,8 @@ def split_key_value(text: str, line_no: int):
     fail(f"YAML parse error on line {line_no}: expected key/value")
   key, value = text.split(":", 1)
   key = key.strip()
+  if len(key) >= 2 and key[0] == key[-1] and key[0] in ("'", '"'):
+    key = key[1:-1]
   if not key:
     fail(f"YAML parse error on line {line_no}: empty key")
   return key, value.strip()
@@ -498,6 +499,7 @@ def resolve_release(component):
         "pattern": pattern,
         "url": asset["browser_download_url"],
         "size": asset.get("size"),
+        "digest": asset.get("digest"),
         "type": asset_config.get("type") or infer_asset_type(asset["name"]),
         "strip_top_level": asset_config.get("strip_top_level", False)
       })
@@ -572,12 +574,40 @@ def resolve_component(component):
   fail(f"Component {component['name']} has unsupported source.type: {source_type}")
 
 
+def digest_sha256(asset):
+  """sha256 hex for an asset: the one we computed, else GitHub's `digest`."""
+  if asset.get("sha256"):
+    return str(asset["sha256"]).lower()
+  digest = str(asset.get("digest") or "")
+  if digest.lower().startswith("sha256:"):
+    return digest.split(":", 1)[1].lower()
+  return None
+
+
+def asset_fingerprint(assets):
+  """Identify a set of release assets. Uses sha256 when every asset has one,
+  otherwise only the names (older state.json entries carry no hashes)."""
+  assets = list(assets or [])
+  hashes = [digest_sha256(asset) for asset in assets]
+  if assets and all(hashes):
+    return sorted(zip((asset.get("name") for asset in assets), hashes))
+  return sorted(asset.get("name") for asset in assets)
+
+
 def is_outdated(state_entry, target) -> bool:
   if not state_entry:
     return True
   if target["source_type"] == "github-branch-archive":
     return state_entry.get("revision") != target.get("revision")
-  return state_entry.get("version") != target.get("version") or state_entry.get("revision") != target.get("revision")
+  if state_entry.get("version") != target.get("version"):
+    return True
+  # Same tag: only re-uploaded or renamed assets count as an update. The
+  # release `updated_at` is ignored, because editing release notes bumps it.
+  current = asset_fingerprint(state_entry.get("assets"))
+  latest = asset_fingerprint(target.get("assets"))
+  if current and latest and type(current[0]) is type(latest[0]):
+    return current != latest
+  return sorted(asset.get("name") for asset in state_entry.get("assets") or []) != sorted(asset.get("name") for asset in target.get("assets") or [])
 
 
 def version_label(entry) -> str:
@@ -625,6 +655,12 @@ def download_validation_error(path: Path, asset):
   size_error = None
   if expected_size and actual_size != expected_size:
     size_error = f"size mismatch: got {actual_size}, expected {expected_size}"
+    return RuntimeError(size_error)
+  expected_hash = digest_sha256({"digest": asset.get("digest")})
+  if expected_hash:
+    actual_hash = file_hash(path)
+    if actual_hash != expected_hash:
+      return RuntimeError(f"sha256 mismatch: got {actual_hash}, expected {expected_hash}")
   if asset.get("type") == "zip":
     try:
       with zipfile.ZipFile(path) as zip_file:
@@ -633,9 +669,7 @@ def download_validation_error(path: Path, asset):
         return RuntimeError(f"zip validation failed at {bad_member}")
       return None
     except zipfile.BadZipFile as error:
-      return RuntimeError(f"invalid zip: {error}; {size_error}" if size_error else f"invalid zip: {error}")
-  if size_error:
-    return RuntimeError(size_error)
+      return RuntimeError(f"invalid zip: {error}")
   return None
 
 
@@ -987,10 +1021,24 @@ def remove_destination(destination: Path, dry_run: bool, actions) -> None:
     destination.unlink()
 
 
-def copy_directory(source: Path, destination: Path, mode: str, excludes, dry_run: bool, actions, allow_protected: bool = False) -> None:
+def clear_directory_except(destination: Path, preserve, dry_run: bool, actions) -> None:
+  """delete-before-copy for a directory that other components also write
+  into: remove every top-level entry except the names listed in `preserve`."""
+  if not destination.is_dir():
+    return
+  for child in sorted(destination.iterdir()):
+    if child.name in preserve:
+      continue
+    remove_destination(child, dry_run, actions)
+
+
+def copy_directory(source: Path, destination: Path, mode: str, excludes, dry_run: bool, actions, allow_protected: bool = False, preserve=()) -> None:
   assume_missing = dry_run and mode == "delete-before-copy" and destination.exists()
   if mode == "delete-before-copy":
-    remove_destination(destination, dry_run, actions)
+    if preserve:
+      clear_directory_except(destination, set(preserve), dry_run, actions)
+    else:
+      remove_destination(destination, dry_run, actions)
   if not dry_run:
     destination.mkdir(parents=True, exist_ok=True)
   for item in sorted(source.rglob("*")):
@@ -1045,7 +1093,7 @@ def apply_mapping(mapping, roots, dry_run: bool, actions) -> None:
   for source in candidates:
     if source.is_dir():
       destination = destination_base
-      copy_directory(source, destination, mode, excludes, dry_run, actions, allow_protected)
+      copy_directory(source, destination, mode, excludes, dry_run, actions, allow_protected, mapping.get("preserve") or ())
     elif source.is_file():
       destination = destination_base / source.name if to_is_dir else destination_base
       if mode == "delete-before-copy":
@@ -1223,7 +1271,10 @@ def state_record(target):
     "version": target.get("version"),
     "revision": target.get("revision"),
     "html_url": target.get("html_url"),
-    "assets": [{"name": asset["name"], "size": asset.get("size"), "type": asset.get("type")} for asset in target.get("assets", [])],
+    "assets": [
+      {key: value for key, value in (("name", asset["name"]), ("size", asset.get("size")), ("type", asset.get("type")), ("sha256", digest_sha256(asset))) if value is not None or key == "size"}
+      for asset in target.get("assets", [])
+    ],
     "updated_at": now_iso()
   }
 
@@ -1418,6 +1469,7 @@ def plan_update(component, target, current, args):
   downloaded = []
   for asset in target["assets"]:
     path, status = download_asset(component["name"], target, asset)
+    asset["sha256"] = file_hash(path)
     report["downloads"].append({"asset": asset, "path": path, "status": status})
     downloaded.append((asset, path))
   roots = prepare_workdir(component["name"], target, downloaded)
@@ -1431,6 +1483,46 @@ def plan_update(component, target, current, args):
 
 def apply_planned_update(report) -> None:
   report["actions"] = apply_install(report["component"], report["roots"], dry_run=False)
+
+
+def requirement_errors(manifests, versions):
+  """Check `requires` constraints against the final version of each
+  component. `versions` maps component name -> version (None = absent).
+
+  A component declares, per version of itself, which version another
+  component must have, e.g. the exosphere.bin shipped by a Horizon OC release
+  only works with one Atmosphere version:
+
+    requires:
+      - component: "atmosphere"
+        versions:
+          "2.6.0-rel": "1.12.1"
+  """
+  by_name = {component["name"]: component for component in manifests}
+  errors = []
+  for component in manifests:
+    version = versions.get(component["name"])
+    if version is None:
+      continue
+    for requirement in component.get("requires") or []:
+      other_name = requirement.get("component")
+      table = {str(key): str(value) for key, value in (requirement.get("versions") or {}).items()}
+      other = by_name.get(other_name)
+      if other is None:
+        errors.append(f"{component_label(component)} requires unknown component {other_name}")
+        continue
+      other_version = versions.get(other_name)
+      if str(version) not in table:
+        errors.append(
+          f"{component_label(component)} {version} has no tested {component_label(other)} version. "
+          f"Test it on a console, then add \"{version}\" to requires in {Path(component['_path']).name}"
+        )
+      elif str(other_version) != table[str(version)]:
+        errors.append(
+          f"{component_label(component)} {version} needs {component_label(other)} {table[str(version)]}, "
+          f"but the bundle would have {other_version or 'none'}"
+        )
+  return errors
 
 
 def protected_paths(report):
@@ -1527,7 +1619,16 @@ def command_update(args) -> int:
   if show_progress:
     progress_clear()
 
-  # Phase 2: refuse the whole update if any plan touches a protected path.
+  # Phase 2: refuse the whole update if the resulting versions break a
+  # `requires` constraint, or if any plan touches a protected path.
+  final_versions = {name: entry.get("version") for name, entry in state["components"].items()}
+  for report in reports:
+    if report["record"]:
+      final_versions[report["component"]["name"]] = report["record"]["version"]
+  incompatible = requirement_errors(load_manifests(), final_versions)
+  if incompatible:
+    fail("Incompatible versions (nothing was changed): " + "; ".join(incompatible))
+
   blocked = [(report, protected_paths(report)) for report in reports if protected_paths(report)]
   if blocked:
     details = "; ".join(f"{component_label(report['component'])}: {', '.join(paths[:5])}" for report, paths in blocked)
@@ -1554,25 +1655,88 @@ def command_update(args) -> int:
   return 0
 
 
+BUNDLE_ROOTS = ("Sources/NXVenom/", "Sources/AIO/")
+HEKATE_PATH_KEYS = ("pkg3", "secmon", "kip1", "fss0", "payload", "kernel")
+
+
+def manifest_destinations(manifests):
+  """Files and directories every enabled manifest promises to install."""
+  required = []
+  for component in manifests:
+    if not component.get("enabled", True):
+      continue
+    for mapping in (component.get("install") or {}).get("mappings") or []:
+      destination = str(mapping.get("to") or "")
+      if not destination or destination.rstrip("/") + "/" in BUNDLE_ROOTS:
+        continue
+      if has_glob(str(mapping.get("from") or "")):
+        continue
+      required.append((destination, component_label(component)))
+  return required
+
+
+def hekate_boot_files(root: Path):
+  """Paths that hekate boot entries load explicitly (e.g. secmon=...)."""
+  paths = []
+  bootloader = root / "Sources/NXVenom/bootloader"
+  for ini in [bootloader / "hekate_ipl.ini", *sorted((bootloader / "ini").glob("*.ini"))]:
+    if not ini.is_file():
+      continue
+    for line in ini.read_text(encoding="utf-8", errors="replace").splitlines():
+      key, _, value = line.partition("=")
+      if key.strip() in HEKATE_PATH_KEYS and value.strip():
+        target = value.strip()
+        if has_glob(target):
+          # kip1=atmosphere/kips/* style: at least one match must exist
+          target = target.rsplit("/", 1)[0] + "/"
+        paths.append((f"Sources/NXVenom/{target}", ini.name))
+  return paths
+
+
 def command_validate(args) -> int:
-  load_manifests()
-  missing = []
-  empty = []
+  manifests = load_manifests()
+  problems = {}
+
+  def report(section, item):
+    problems.setdefault(section, []).append(item)
+
   for item in REQUIRED_PATHS:
     path = ROOT_DIR / item
     if not path.exists():
-      missing.append(item)
+      report("missing required paths", item)
     elif path.is_file() and path.stat().st_size == 0:
-      empty.append(item)
-  if missing:
-    print("missing required paths:")
-    for item in missing:
+      report("empty required files", item)
+
+  for destination, label in manifest_destinations(manifests):
+    path = ROOT_DIR / destination
+    if destination.endswith("/"):
+      if not path.is_dir() or not any(path.iterdir()):
+        report("missing or empty component directories", f"{destination} ({label})")
+    elif not path.is_file():
+      report("missing component files", f"{destination} ({label})")
+
+  for destination, ini_name in hekate_boot_files(ROOT_DIR):
+    path = ROOT_DIR / destination
+    exists = path.is_dir() and any(path.iterdir()) if destination.endswith("/") else path.is_file()
+    if not exists:
+      report("files referenced by hekate boot entries", f"{destination} ({ini_name})")
+
+  for root in BUNDLE_ROOTS:
+    for path in sorted((ROOT_DIR / root).rglob("*.json")):
+      try:
+        json.loads(path.read_text(encoding="utf-8-sig"))
+      except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        report("invalid JSON", f"{relative_to_root(path)}: {error}")
+
+  versions = {name: entry.get("version") for name, entry in load_state()["components"].items()}
+  for error in requirement_errors(manifests, versions):
+    report("incompatible component versions", error)
+
+  for section, items in problems.items():
+    print(f"{section}:")
+    for item in items:
       print(f"  {item}")
-  if empty:
-    print("empty required files:")
-    for item in empty:
-      print(f"  {item}")
-  if missing or empty:
+  if problems:
     return 1
   print("validation ok")
   return 0

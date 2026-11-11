@@ -1,0 +1,71 @@
+# Tokyo Mirage Sessions #FE Encore 1.0.0
+# BID: 33463E11899166BB
+# What is still not adjusted: movement speed in cutscenes, 2D animations speed (it includes UI and 2D effects on 3D objects), none of them uses 1/30 nor 1/60 float
+
+DECLARATIONS:
+  -
+    type: variable
+    name: gameSpeed
+    value_type: float
+    default_value: 0.033333333
+    evaluate: "1 / FPS_TARGET"
+  -
+    type: code
+    name: animationSpeed
+    instructions: [
+      [movw, r0, $gameSpeed],
+      [movt, r0, $gameSpeed],
+      [vldr, s18, [r0]],
+      [bx, lr]
+    ]
+  -
+    type: code
+    name: movementSpeed
+    instructions: [
+      [movw, r0, $gameSpeed],
+      [movt, r0, $gameSpeed],
+      [vldr, s2, [r0]],
+      [bx, lr]
+    ]
+MASTER_WRITE:
+  # Triple buffer
+  -
+    type: asm_a32
+    main_offset: 0x2F3CD8
+    instructions: [
+      [mov, r1, 3]
+    ]
+  -
+    type: asm_a32
+    main_offset: 0x35C218
+    instructions: [
+      [mov, r0, 3]
+    ]
+  -
+    type: asm_a32
+    main_offset: 0x35C2C0
+    instructions: [
+      [mov, r2, 3]
+    ]
+  -
+    type: asm_a32
+    main_offset: 0x35C2D0
+    instructions: [
+      [mov, r2, 3]
+    ]
+  # Animation speed
+  # Jump to MAIN + 0x4EFBE0
+  -
+    type: asm_a32
+    main_offset: 0x1CE4B4
+    instructions: [
+      [bl, _animationSpeed()]
+    ]
+  # Movement speed
+  # Jump to MAIN + 0x4EFBFC
+  -
+    type: asm_a32
+    main_offset: 0x20B750
+    instructions: [
+      [bl, _movementSpeed()]
+    ]
