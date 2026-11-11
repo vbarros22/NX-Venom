@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from collections import Counter
@@ -95,10 +96,55 @@ def has_glob(value: str) -> bool:
   return any(ch in value for ch in "*?[")
 
 
+def strip_yaml_comment(text: str) -> str:
+  """Drop a trailing `# comment` that sits outside quotes. As in YAML, `#`
+  only starts a comment at the start of the text or after whitespace."""
+  quote = None
+  escaped = False
+  for index, char in enumerate(text):
+    if quote:
+      if escaped:
+        escaped = False
+      elif char == "\\" and quote == '"':
+        escaped = True
+      elif char == quote:
+        quote = None
+    elif char in ("'", '"'):
+      quote = char
+    elif char == "#" and (index == 0 or text[index - 1] in " \t"):
+      return text[:index].rstrip()
+  return text
+
+
+def split_flow_items(text: str):
+  items = []
+  current = []
+  quote = None
+  for char in text:
+    if quote:
+      current.append(char)
+      if char == quote:
+        quote = None
+    elif char in ("'", '"'):
+      quote = char
+      current.append(char)
+    elif char == ",":
+      items.append("".join(current))
+      current = []
+    else:
+      current.append(char)
+  tail = "".join(current)
+  if tail.strip() or items:
+    items.append(tail)
+  return [item for item in items if item.strip()]
+
+
 def parse_scalar(value: str):
   value = value.strip()
   if value == "":
     return None
+  if value.startswith("[") and value.endswith("]"):
+    return [parse_scalar(item) for item in split_flow_items(value[1:-1])]
   if value in ("true", "True"):
     return True
   if value in ("false", "False"):
@@ -212,7 +258,10 @@ def parse_yaml(text: str, path: Path):
     if "\t" in line[:len(line) - len(stripped)]:
       fail(f"YAML parse error in {path} on line {line_no}: tabs are not supported")
     indent = len(line) - len(stripped)
-    lines.append((indent, stripped.rstrip(), line_no))
+    content = strip_yaml_comment(stripped.rstrip())
+    if not content:
+      continue
+    lines.append((indent, content, line_no))
   if not lines:
     return {}
   result, index = parse_yaml_block(lines, 0, lines[0][0])
@@ -292,16 +341,43 @@ def github_token():
   return os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or github_cli_token()
 
 
-def github_headers():
+TOKEN_HOSTS = {"api.github.com"}
+
+
+def url_host(url: str) -> str:
+  return (urllib.parse.urlsplit(url).hostname or "").lower()
+
+
+def github_headers(url: str):
   headers = {
     "Accept": "application/vnd.github+json",
     "User-Agent": USER_AGENT,
     "X-GitHub-Api-Version": "2022-11-28"
   }
-  token = github_token()
-  if token:
-    headers["Authorization"] = f"Bearer {token}"
+  # Only the API needs the token. Release asset and archive downloads are
+  # public and redirect to other hosts, so the token never goes there.
+  if url_host(url) in TOKEN_HOSTS:
+    token = github_token()
+    if token:
+      headers["Authorization"] = f"Bearer {token}"
   return headers
+
+
+class StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+  """urllib copies every header onto a redirect, including Authorization.
+  Drop it whenever the redirect leaves the original host."""
+
+  def redirect_request(self, req, fp, code, msg, headers, newurl):
+    new_request = super().redirect_request(req, fp, code, msg, headers, newurl)
+    if new_request is not None and url_host(newurl) != url_host(req.full_url):
+      for name in list(new_request.headers):
+        if name.lower() == "authorization":
+          del new_request.headers[name]
+      new_request.unredirected_hdrs.pop("Authorization", None)
+    return new_request
+
+
+HTTP_OPENER = urllib.request.build_opener(StripAuthOnRedirect)
 
 
 def api_cache_path(url: str) -> Path:
@@ -353,11 +429,11 @@ def request_json(url: str):
   cached = read_api_cache(url)
   if cached:
     return cached[0]
-  request = urllib.request.Request(url, headers=github_headers())
+  request = urllib.request.Request(url, headers=github_headers(url))
   last_error = None
   for attempt in range(3):
     try:
-      with urllib.request.urlopen(request, timeout=45) as response:
+      with HTTP_OPENER.open(request, timeout=45) as response:
         payload = json.loads(response.read().decode("utf-8"))
       write_api_cache(url, payload)
       return payload
@@ -564,8 +640,8 @@ def download_validation_error(path: Path, asset):
 
 
 def download_with_urllib(asset, temporary: Path):
-  request = urllib.request.Request(asset["url"], headers=github_headers())
-  with urllib.request.urlopen(request, timeout=120) as response, temporary.open("wb") as output:
+  request = urllib.request.Request(asset["url"], headers=github_headers(asset["url"]))
+  with HTTP_OPENER.open(request, timeout=120) as response, temporary.open("wb") as output:
     shutil.copyfileobj(response, output)
 
 
@@ -588,7 +664,7 @@ def download_with_curl(asset, temporary: Path):
     raise RuntimeError(result.stderr.strip() or f"curl failed with exit code {result.returncode}")
 
 
-def download_asset(component_name: str, target, asset, dry_run=False):
+def download_asset(component_name: str, target, asset):
   destination = cache_path_for(component_name, target, asset)
   if destination.exists() and destination.stat().st_size > 0:
     cache_error = download_validation_error(destination, asset)
@@ -1164,7 +1240,14 @@ def command_list(args) -> int:
   return 0
 
 
-def print_check_table(rows, updates: int) -> None:
+CHECK_STATUS_STYLE = {
+  "update": ("UPDATE", ANSI_RED),
+  "ok": ("OK", ANSI_GREEN),
+  "error": ("ERROR", ANSI_BOLD_YELLOW)
+}
+
+
+def print_check_table(rows, updates: int, errors=()) -> None:
   name_width = max([len(row["label"]) for row in rows] + [9])
   current_width = max([len(row["current"]) for row in rows] + [7])
   latest_width = max([len(row["latest"]) for row in rows] + [6])
@@ -1182,8 +1265,7 @@ def print_check_table(rows, updates: int) -> None:
       print(colorize(current_category, ANSI_BOLD_YELLOW))
       print(colorize(header, ANSI_DIM))
       print(colorize(separator, ANSI_DIM))
-    status_label = "UPDATE" if row["status"] == "update" else "OK"
-    status_color = ANSI_RED if row["status"] == "update" else ANSI_GREEN
+    status_label, status_color = CHECK_STATUS_STYLE[row["status"]]
     print(
       f"  {row['label']:<{name_width}}  "
       f"{row['current']:<{current_width}}  "
@@ -1195,6 +1277,12 @@ def print_check_table(rows, updates: int) -> None:
   print(colorize("Summary", ANSI_BOLD_YELLOW))
   print(f"  checked: {len(rows)}")
   print(f"  updates: {colorize(str(updates), ANSI_RED if updates else ANSI_GREEN)}")
+  if errors:
+    print(f"  errors:  {colorize(str(len(errors)), ANSI_BOLD_YELLOW)}")
+    print()
+    print(colorize("Errors", ANSI_BOLD_YELLOW))
+    for label, message in errors:
+      print(f"  {label}: {message}")
 
 
 def command_check(args) -> int:
@@ -1203,15 +1291,22 @@ def command_check(args) -> int:
   updates = 0
   total = len(manifests)
   rows = []
+  errors = []
   show_progress = total > 1
   for index, component in enumerate(manifests):
     if show_progress:
       progress_message(f"Checking updates [{index + 1}/{total}] {component_label(component)}")
-    target = resolve_component(component)
     current = state["components"].get(component["name"])
     current_version = version_label(current)
-    target_version = version_label(target)
-    status = "update" if is_outdated(current, target) else "ok"
+    try:
+      target = resolve_component(component)
+    except RuntimeError as error:
+      errors.append((component_label(component), str(error)))
+      target_version = "?"
+      status = "error"
+    else:
+      target_version = version_label(target)
+      status = "update" if is_outdated(current, target) else "ok"
     if status == "update":
       updates += 1
     rows.append({
@@ -1223,7 +1318,9 @@ def command_check(args) -> int:
     })
   if show_progress:
     progress_clear()
-  print_check_table(rows, updates)
+  print_check_table(rows, updates, errors)
+  if errors:
+    return 1
   return 2 if updates and args.fail_on_updates else 0
 
 
@@ -1247,7 +1344,10 @@ def command_adopt(args) -> int:
   return 0
 
 
-def evaluate_update(component, target, current, args):
+def plan_update(component, target, current, args):
+  """Download, unpack and transform a component, and compute the actions it
+  would perform. Never writes to Sources/: the install itself happens later in
+  apply_planned_update, only after every selected component planned cleanly."""
   current_version = version_label(current)
   report = {
     "component": component,
@@ -1257,6 +1357,7 @@ def evaluate_update(component, target, current, args):
     "downloads": [],
     "content_entries": [],
     "actions": [],
+    "roots": [],
     "record": None,
     "outdated": args.force or is_outdated(current, target)
   }
@@ -1264,15 +1365,20 @@ def evaluate_update(component, target, current, args):
     return report
   downloaded = []
   for asset in target["assets"]:
-    path, status = download_asset(component["name"], target, asset, dry_run=args.dry_run)
+    path, status = download_asset(component["name"], target, asset)
     report["downloads"].append({"asset": asset, "path": path, "status": status})
     downloaded.append((asset, path))
   roots = prepare_workdir(component["name"], target, downloaded)
   apply_install_transforms(component, roots)
+  report["roots"] = roots
   report["content_entries"] = collect_install_content(component, roots)
-  report["actions"] = apply_install(component, roots, args.dry_run)
+  report["actions"] = apply_install(component, roots, dry_run=True)
   report["record"] = state_record(target)
   return report
+
+
+def apply_planned_update(report) -> None:
+  report["actions"] = apply_install(report["component"], report["roots"], dry_run=False)
 
 
 def protected_paths(report):
@@ -1348,19 +1454,42 @@ def command_update(args) -> int:
   manifests = sort_components_for_display(selected_components(load_manifests(), args.component))
   groups = grouped_components(manifests)
   state = load_state()
-  changed = False
   total = len(manifests)
   reports = []
   show_progress = total > 1
   progress_label = update_progress_label(args)
+
+  # Phase 1: resolve, download and plan every component. Any failure here
+  # (network, missing asset, bad transform) aborts before Sources/ is touched.
   for index, component in enumerate(manifests):
     if show_progress:
       progress_message(f"{progress_label} [{index + 1}/{total}] {component_label(component)}")
-    target = resolve_component(component)
-    current = state["components"].get(component["name"])
-    reports.append(evaluate_update(component, target, current, args))
+    try:
+      target = resolve_component(component)
+      current = state["components"].get(component["name"])
+      reports.append(plan_update(component, target, current, args))
+    except RuntimeError as error:
+      if show_progress:
+        progress_clear()
+      fail(f"{component_label(component)}: {error} (nothing was changed)")
   if show_progress:
     progress_clear()
+
+  # Phase 2: refuse the whole update if any plan touches a protected path.
+  blocked = [(report, protected_paths(report)) for report in reports if protected_paths(report)]
+  if blocked:
+    details = "; ".join(f"{component_label(report['component'])}: {', '.join(paths[:5])}" for report, paths in blocked)
+    fail(f"Protected paths would be overwritten (nothing was changed): {details}")
+
+  # Phase 3: apply, recording state after each component so an interruption
+  # never leaves Sources/ and state.json out of sync by more than one step.
+  if not args.dry_run:
+    for report in reports:
+      if not report["record"]:
+        continue
+      apply_planned_update(report)
+      state["components"][report["component"]["name"]] = report["record"]
+      save_state(state)
 
   if args.dry_run and not args.full and total > 1:
     reports_by_name = {report["component"]["name"]: report for report in reports}
@@ -1370,17 +1499,6 @@ def command_update(args) -> int:
       if index:
         print()
       print_update_report_full(report, args, index + 1, total)
-
-  for report in reports:
-    protected = protected_paths(report)
-    if protected:
-      fail("Protected paths would be overwritten: " + ", ".join(protected[:10]))
-    if report["record"]:
-      changed = True
-      if not args.dry_run:
-        state["components"][report["component"]["name"]] = report["record"]
-  if changed and not args.dry_run:
-    save_state(state)
   return 0
 
 

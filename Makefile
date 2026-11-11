@@ -9,7 +9,7 @@ AIO_STAGE := Build/work/package-aio
 FPSLOCKER_WAREHOUSE_URL := https://github.com/masagrator/FPSLocker-Warehouse/archive/refs/heads/v4.zip
 .DEFAULT_GOAL := help
 
-.PHONY: help check-updates update update-all update-dry-run adopt-latest list-components validate build build-nxvenom build-aio release release-notes release-draft-upload install-fpslocker-patches clean-update-work clean-update-cache clean-zips clean
+.PHONY: help test check-updates update update-all update-dry-run adopt-latest list-components validate build build-nxvenom build-aio release release-notes release-draft-upload install-fpslocker-patches clean-update-work clean-update-cache clean-zips clean
 
 help:
 	@printf "\n\033[1;36mNX-Venom automation\033[0m\n\n"
@@ -36,6 +36,7 @@ help:
 	@printf "  \033[1;32m%-64s\033[0m  %s\n" "make list-components" "Show configured components"
 	@printf "  \033[1;32m%-64s\033[0m  %s\n" "make adopt-latest [name=component]" "Mark latest as accepted"
 	@printf "  \033[1;32m%-64s\033[0m  %s\n" "make validate" "Validate bundle structure"
+	@printf "  \033[1;32m%-64s\033[0m  %s\n" "make test" "Run updater unit tests (offline)"
 	@printf "  \033[1;32m%-64s\033[0m  %s\n" "make clean-update-work" "Remove temporary unpacked files"
 	@printf "  \033[1;32m%-64s\033[0m  %s\n" "make clean-update-cache" "Remove downloaded cache"
 	@printf "  \033[1;32m%-64s\033[0m  %s\n" "make clean-zips" "Remove built zip files"
@@ -66,6 +67,9 @@ list-components:
 
 validate:
 	@$(VENOM_UPDATE) validate
+
+test:
+	@$(PYTHON) -m unittest discover -s Build/tests -v
 
 build: validate build-nxvenom build-aio
 
