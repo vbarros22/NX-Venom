@@ -8,12 +8,12 @@ source:
   branch: "main"
 install:
   transforms:
-    - type: "replace-text"
+    # Drop upstream's "Testing builds" installer (it downloads a zip and moves
+    # it over the SD root). Matched by header, so URL changes don't break it.
+    - type: "remove-ini-section"
       asset: "Easy-setup-main-*.zip"
       path: "data/miscellaneous.ini"
-      replacements:
-        - old: "\n[Testing builds(don't touch unless advised)]\ndownload https://cdn.discordapp.com/attachments/1421497547066970194/1547947268471005305/dist.zip?ex=6aa545bc&is=6aa3f43c&hm=74e61d3bfd67564848b32dd9f6cbfbf4f74954e254d6364479d6ac36f1bb169f& /config/ultrahand/downloads/dist.zip \nunzip /config/ultrahand/downloads/dist.zip /config/ultrahand/downloads/app/\nmove /config/ultrahand/downloads/app/ /\ndelete /config/ultrahand/downloads/dist.zip \nreboot\n"
-          new: ""
+      section: "Testing builds*"
       final_newline: true
   mappings:
     - asset: "Easy-setup-main-*.zip"
