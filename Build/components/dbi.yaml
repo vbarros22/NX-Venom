@@ -2,14 +2,18 @@ name: "dbi"
 display_name: "DBI"
 enabled: true
 category: "Apps / Tools"
+# rashevskyv/dbi only publishes the Russian build ("912ru"). DBIPatcher
+# publishes the same version prepared for translations: its own DBI.nro plus
+# one translation_XX.bin per language, which must sit next to the nro as
+# translation.bin. dbi.config is kept as committed (same DBI version).
 source:
   type: "github-release"
-  repo: "rashevskyv/dbi"
+  repo: "rashevskyv/DBIPatcher"
   release: "latest"
 assets:
   - pattern: "DBI.nro"
     type: "file"
-  - pattern: "dbi.config"
+  - pattern: "translation_[Ee][Nn].bin"
     type: "file"
 install:
   mappings:
@@ -17,7 +21,7 @@ install:
       from: "DBI.nro"
       to: "Sources/NXVenom/switch/DBI/DBI.nro"
       mode: "overwrite"
-    - asset: "dbi.config"
-      from: "dbi.config"
-      to: "Sources/NXVenom/switch/DBI/dbi.config"
+    - asset: "translation_[Ee][Nn].bin"
+      from: "translation_[Ee][Nn].bin"
+      to: "Sources/NXVenom/switch/DBI/translation.bin"
       mode: "overwrite"
