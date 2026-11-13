@@ -16,6 +16,9 @@ requires:
   - component: "atmosphere"
     versions:
       "2.6.0-rel": "1.12.1"
+      # 2.6.1 was rebuilt on 2026-11-12 against AMS 1.12.2 (hocate 6.5.5),
+      # after upstream issue #120 (black screen on sleep with 1.12.2).
+      "2.6.1": "1.12.2"
 assets:
   - pattern: "dist_ext.zip"
     type: "zip"

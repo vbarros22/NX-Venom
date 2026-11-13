@@ -8,11 +8,10 @@ source:
   type: "github-release"
   repo: "Atmosphere-NX/Atmosphere"
   # PINNED: hekate_ipl.ini boots with secmon=atmosphere/exosphere.bin, which
-  # comes from Horizon OC and must match this Atmosphere version. HOC 2.6.0
-  # ships an exosphere for 1.12.1; package3 1.12.2 + that exosphere boots to a
-  # black screen. Bump only together with a HOC release built for the new AMS,
-  # and update `requires` in horizon-oc.yaml (the updater enforces it).
-  release: "1.12.1"
+  # comes from Horizon OC and must match this Atmosphere version (a mismatch
+  # boots to a black screen). Bump only together with a HOC release built for
+  # the new AMS, and update `requires` in horizon-oc.yaml (enforced).
+  release: "1.12.2"
 assets:
   - pattern: "atmosphere-*.zip"
     type: "zip"
