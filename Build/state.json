@@ -33,22 +33,24 @@
     "atmosphere": {
       "assets": [
         {
-          "name": "atmosphere-1.12.1-master-6b0c077b4+hbl-2.4.5+hbmenu-3.6.1.zip",
-          "size": 4772493,
+          "name": "atmosphere-1.12.2-master-4e3f37038+hbl-2.4.5+hbmenu-3.6.1.zip",
+          "sha256": "57d0019ff430af4b712899ff58fd341da8d9ed38159c51ade8e29fd42ecb2dda",
+          "size": 4772937,
           "type": "zip"
         },
         {
           "name": "fusee.bin",
-          "size": 112064,
+          "sha256": "1ef8e019fcd6e6026f88075e8dc391f461614d915f4322af776c9903d42ff5ca",
+          "size": 112160,
           "type": "file"
         }
       ],
-      "html_url": "https://github.com/Atmosphere-NX/Atmosphere/releases/tag/1.12.1",
+      "html_url": "https://github.com/Atmosphere-NX/Atmosphere/releases/tag/1.12.2",
       "repo": "Atmosphere-NX/Atmosphere",
-      "revision": "2026-10-16T00:05:51Z",
+      "revision": "2026-11-11T00:09:15Z",
       "source_type": "github-release",
-      "updated_at": "2026-11-11T18:14:35+00:00",
-      "version": "1.12.1"
+      "updated_at": "2026-11-13T15:49:29+00:00",
+      "version": "1.12.2"
     },
     "dbi": {
       "assets": [
@@ -105,17 +107,17 @@
     "fpslocker-patches": {
       "assets": [
         {
-          "name": "FPSLocker-Warehouse-v4-29840cd5ce36.zip",
-          "sha256": "d426ca6184d523eabd6914bac8b369ea9a53bd9499fe607c99a369e9b020fa39",
+          "name": "FPSLocker-Warehouse-v4-371ff5200e17.zip",
+          "sha256": "8f4063275a0cd6a3d9512e3d14fc24188fff91bc8d53c77843493120fcaa3f49",
           "size": null,
           "type": "zip"
         }
       ],
       "html_url": "https://github.com/masagrator/FPSLocker-Warehouse/tree/v4",
       "repo": "masagrator/FPSLocker-Warehouse",
-      "revision": "29840cd5ce36d330a227021b6a5b16af1407cdca",
+      "revision": "371ff5200e170169858b697f8da2daf7b9853877",
       "source_type": "github-branch-archive",
-      "updated_at": "2026-11-11T18:42:34+00:00",
+      "updated_at": "2026-11-13T15:49:32+00:00",
       "version": "v4"
     },
     "hekate": {
@@ -137,16 +139,17 @@
       "assets": [
         {
           "name": "dist_ext.zip",
-          "size": 9183002,
+          "sha256": "19bb95f5737840a302013e5f73afaced61a1de131e8d59bb581495d29d6609b2",
+          "size": 9214252,
           "type": "zip"
         }
       ],
-      "html_url": "https://github.com/Horizon-OC/Horizon-OC/releases/tag/2.6.0-rel",
+      "html_url": "https://github.com/Horizon-OC/Horizon-OC/releases/tag/2.6.1",
       "repo": "Horizon-OC/Horizon-OC",
-      "revision": "2026-10-16T00:38:16Z",
+      "revision": "2026-11-12T12:01:44Z",
       "source_type": "github-release",
-      "updated_at": "2026-10-17T11:13:15+00:00",
-      "version": "2.6.0-rel"
+      "updated_at": "2026-11-13T15:49:30+00:00",
+      "version": "2.6.1"
     },
     "lightning": {
       "assets": [
