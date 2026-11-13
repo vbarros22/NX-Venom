@@ -15,6 +15,28 @@ install:
       path: "data/miscellaneous.ini"
       section: "Testing builds*"
       final_newline: true
+    # The FPSLocker-Warehouse v4 branch archive unpacks to
+    # FPSLocker-Warehouse-4/ (ported from upstream 52735d2).
+    - type: "replace-text"
+      asset: "Easy-setup-main-*.zip"
+      path: "data/Hoc.ini"
+      replacements:
+        - old: "/config/ultrahand/downloads/FPSLocker-Warehouse-main/"
+          new: "/config/ultrahand/downloads/FPSLocker-Warehouse-4/"
+          count: 2
+    - type: "replace-text"
+      asset: "Easy-setup-main-*.zip"
+      path: "data/manual.ini"
+      replacements:
+        - old: "/config/ultrahand/downloads/FPSLocker-Warehouse-main/"
+          new: "/config/ultrahand/downloads/FPSLocker-Warehouse-4/"
+          count: 2
+    - type: "replace-text"
+      asset: "Easy-setup-main-*.zip"
+      path: "data/Software.ini"
+      replacements:
+        - old: "/config/ultrahand/downloads/Ez/FPSLocker-Warehouse-3/"
+          new: "/config/ultrahand/downloads/Ez/FPSLocker-Warehouse-4/"
   mappings:
     - asset: "Easy-setup-main-*.zip"
       from: "."
